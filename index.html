@@ -1,0 +1,508 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Sky Rider - Airplane Game</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      font-family: Arial, sans-serif;
+      width: 100vw;
+      height: 100vh;
+    }
+    #game-container {
+      position: absolute;
+      width: 100vw;
+      height: 100vh;
+      background: linear-gradient(to bottom, #87CEEB, #E0F7FF);
+      overflow: hidden;
+    }
+    #airplane {
+      position: absolute;
+      width: 80px;
+      height: 40px;
+      left: 10vw;
+      top: 50vh;
+      transition: transform 0.1s;
+      z-index: 10;
+    }
+    .cloud {
+      position: absolute;
+      background: white;
+      border-radius: 50%;
+      opacity: 0.8;
+      z-index: 5;
+    }
+    .enemy {
+      position: absolute;
+      z-index: 8;
+    }
+    .bullet {
+      position: absolute;
+      width: 10px;
+      height: 4px;
+      background-color: yellow;
+      border-radius: 2px;
+      z-index: 7;
+    }
+    .enemy-bullet {
+      position: absolute;
+      width: 10px;
+      height: 4px;
+      background-color: red;
+      border-radius: 2px;
+      z-index: 7;
+    }
+    .explosion {
+      position: absolute;
+      width: 40px;
+      height: 40px;
+      background: radial-gradient(circle, #ff4500, #ff8c00, #ffd700);
+      border-radius: 50%;
+      animation: explode 0.5s forwards;
+      z-index: 9;
+    }
+    @keyframes explode {
+      0% { opacity: 1; transform: scale(0.5); }
+      100% { opacity: 0; transform: scale(2); }
+    }
+    #score {
+      position: absolute;
+      top: 20px;
+      right: 20px;
+      font-size: 24px;
+      color: #333;
+      background: rgba(255, 255, 255, 0.7);
+      padding: 10px 15px;
+      border-radius: 10px;
+      z-index: 100;
+    }
+    #game-over {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      background: rgba(255, 255, 255, 0.9);
+      padding: 30px;
+      border-radius: 15px;
+      text-align: center;
+      display: none;
+      z-index: 100;
+      box-shadow: 0 0 20px rgba(0,0,0,0.3);
+    }
+    #restart-btn {
+      padding: 15px 30px;
+      background: #4CAF50;
+      color: white;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      margin-top: 15px;
+      font-size: 18px;
+      transition: background-color 0.3s;
+    }
+    #restart-btn:hover {
+      background: #45a049;
+    }
+    #instructions {
+      position: absolute;
+      bottom: 20px;
+      left: 20px;
+      background: rgba(255, 255, 255, 0.7);
+      padding: 10px 15px;
+      border-radius: 10px;
+      font-size: 16px;
+      z-index: 100;
+    }
+  </style>
+</head>
+<body>
+  <div id="game-container">
+    <div id="score">Score: 0</div>
+    <div id="instructions">UP/DOWN: Move Plane | SPACE: Shoot | Destroy enemies to score!</div>
+    <svg id="airplane" viewBox="0 0 60 30">
+      <path d="M50,15 L60,12 L60,18 L50,15 M0,15 L50,15 L45,5 L35,5 L30,15 M30,15 L35,25 L45,25 L50,15" fill="#3366CC" stroke="#000" stroke-width="1"/>
+      <circle cx="10" cy="15" r="3" fill="#FF3333"/>
+    </svg>
+    <div id="game-over">
+      <h2>Game Over!</h2>
+      <p>Your score: <span id="final-score">0</span></p>
+      <button id="restart-btn">Play Again</button>
+    </div>
+  </div>
+
+  <script>
+    // Game variables
+    const airplane = document.getElementById('airplane');
+    const gameContainer = document.getElementById('game-container');
+    const scoreElement = document.getElementById('score');
+    const gameOverScreen = document.getElementById('game-over');
+    const finalScoreElement = document.getElementById('final-score');
+    const restartBtn = document.getElementById('restart-btn');
+    
+    let planeY = window.innerHeight / 2;
+    let planeSpeed = 0;
+    let score = 0;
+    let clouds = [];
+    let enemies = [];
+    let bullets = [];
+    let enemyBullets = [];
+    let gameActive = true;
+    let obstacleSpeed = window.innerWidth / 200; // Adjust speed based on screen width
+    let lastShootTime = 0;
+    let shootCooldown = 300; // milliseconds
+    
+    // Set up key controls
+    let keys = {};
+    
+    document.addEventListener('keydown', function(event) {
+      keys[event.key] = true;
+      
+      if ((event.key === 'ArrowUp' || event.key === 'ArrowDown') && gameActive) {
+        event.preventDefault(); // Prevent page scrolling
+      }
+      
+      // Shoot on spacebar
+      if (event.key === ' ' && gameActive) {
+        shoot();
+        event.preventDefault();
+      }
+    });
+    
+    document.addEventListener('keyup', function(event) {
+      keys[event.key] = false;
+    });
+
+    // Add touch controls for mobile
+    let touchStartY = 0;
+    let lastTouchTime = 0;
+    
+    document.addEventListener('touchstart', function(event) {
+      if (!gameActive) return;
+      touchStartY = event.touches[0].clientY;
+      
+      // Double tap to shoot
+      const now = Date.now();
+      if (now - lastTouchTime < 300) {
+        shoot();
+      }
+      lastTouchTime = now;
+      
+      event.preventDefault();
+    }, { passive: false });
+    
+    document.addEventListener('touchmove', function(event) {
+      if (!gameActive) return;
+      const touchY = event.touches[0].clientY;
+      const deltaY = touchY - touchStartY;
+      
+      if (deltaY < -20) {
+        planeSpeed = -6;
+      } else if (deltaY > 20) {
+        planeSpeed = 6;
+      }
+      
+      touchStartY = touchY;
+      event.preventDefault();
+    }, { passive: false });
+    
+    document.addEventListener('touchend', function() {
+      planeSpeed = 0;
+    });
+    
+    // Handle window resize
+    window.addEventListener('resize', function() {
+      // Adjust obstacle speed based on new window size
+      obstacleSpeed = window.innerWidth / 200;
+    });
+    
+    // Create clouds function
+    function createCloud() {
+      const cloud = document.createElement('div');
+      cloud.className = 'cloud';
+      const size = Math.random() * (window.innerWidth / 10) + (window.innerWidth / 20);
+      cloud.style.width = size + 'px';
+      cloud.style.height = size / 2 + 'px';
+      cloud.style.left = window.innerWidth + 'px';
+      cloud.style.top = Math.random() * (window.innerHeight - size) + 'px';
+      cloud.speed = Math.random() * 2 + 1;
+      gameContainer.appendChild(cloud);
+      clouds.push(cloud);
+    }
+    
+    // Create enemy function
+    function createEnemy() {
+      const enemy = document.createElement('div');
+      enemy.className = 'enemy';
+      const size = window.innerHeight / 15;
+      enemy.style.width = size + 'px';
+      enemy.style.height = size + 'px';
+      enemy.style.backgroundColor = '#FF6347';
+      enemy.style.borderRadius = '0%';
+      enemy.style.left = window.innerWidth + 'px';
+      enemy.style.top = Math.random() * (window.innerHeight - size) + 'px';
+      enemy.health = 2; // Takes 2 hits to destroy
+      enemy.shootTimer = Math.random() * 3000; // Random initial delay
+      gameContainer.appendChild(enemy);
+      enemies.push(enemy);
+    }
+    
+    // Player shoot function
+    function shoot() {
+      const now = Date.now();
+      if (now - lastShootTime < shootCooldown) return;
+      
+      lastShootTime = now;
+      
+      const planeRect = airplane.getBoundingClientRect();
+      const bullet = document.createElement('div');
+      bullet.className = 'bullet';
+      bullet.style.left = (planeRect.right) + 'px';
+      bullet.style.top = (planeRect.top + planeRect.height / 2) + 'px';
+      gameContainer.appendChild(bullet);
+      bullets.push(bullet);
+      
+      // Add sound effect
+      // const shootSound = new Audio('data:audio/wav;base64,...'); // Base64 sound would go here
+      // shootSound.volume = 0.3;
+      // shootSound.play();
+    }
+    
+    // Enemy shoot function
+    function enemyShoot(enemy) {
+      const enemyRect = enemy.getBoundingClientRect();
+      const bullet = document.createElement('div');
+      bullet.className = 'enemy-bullet';
+      bullet.style.left = (enemyRect.left) + 'px';
+      bullet.style.top = (enemyRect.top + enemyRect.height / 2) + 'px';
+      gameContainer.appendChild(bullet);
+      enemyBullets.push(bullet);
+    }
+    
+    // Create explosion function
+    function createExplosion(x, y) {
+      const explosion = document.createElement('div');
+      explosion.className = 'explosion';
+      explosion.style.left = x + 'px';
+      explosion.style.top = y + 'px';
+      gameContainer.appendChild(explosion);
+      
+      setTimeout(() => {
+        explosion.remove();
+      }, 500);
+    }
+    
+    // Check collision function
+    function checkCollision(rect1, rect2) {
+      return (
+        rect1.left < rect2.right &&
+        rect1.right > rect2.left &&
+        rect1.top < rect2.bottom &&
+        rect1.bottom > rect2.top
+      );
+    }
+    
+    // Game over function
+    function endGame() {
+      gameActive = false;
+      finalScoreElement.textContent = score;
+      gameOverScreen.style.display = 'block';
+    }
+    
+    // Restart game function
+    function restartGame() {
+      // Clear all game elements
+      enemies.forEach(enemy => enemy.remove());
+      clouds.forEach(cloud => cloud.remove());
+      bullets.forEach(bullet => bullet.remove());
+      enemyBullets.forEach(bullet => bullet.remove());
+      
+      enemies = [];
+      clouds = [];
+      bullets = [];
+      enemyBullets = [];
+      
+      // Reset variables
+      planeY = window.innerHeight / 2;
+      planeSpeed = 0;
+      score = 0;
+      gameActive = true;
+      obstacleSpeed = window.innerWidth / 200;
+      
+      // Hide game over screen and update score
+      gameOverScreen.style.display = 'none';
+      scoreElement.textContent = 'Score: 0';
+      
+      // Reset plane position
+      airplane.style.top = planeY + 'px';
+      airplane.style.transform = 'rotate(0deg)';
+      
+      // Restart game loop
+      if (!gameLoopInterval) {
+        gameLoopInterval = setInterval(gameLoop, 20);
+      }
+    }
+    
+    restartBtn.addEventListener('click', restartGame);
+    
+    // Game loop
+    function gameLoop() {
+      if (!gameActive) return;
+      
+      // Process keyboard input
+      if (keys['ArrowUp']) {
+        planeSpeed = -6;
+      } else if (keys['ArrowDown']) {
+        planeSpeed = 6;
+      } else {
+        planeSpeed = 0;
+      }
+      
+      // Update plane position
+      planeY += planeSpeed;
+      planeY = Math.max(0, Math.min(planeY, window.innerHeight - 40));
+      airplane.style.top = planeY + 'px';
+      
+      // Rotate plane based on direction
+      const rotation = planeSpeed * 2;
+      airplane.style.transform = `rotate(${rotation}deg)`;
+      
+      // Move clouds
+      for (let i = clouds.length - 1; i >= 0; i--) {
+        const cloud = clouds[i];
+        cloud.style.left = (parseFloat(cloud.style.left) - cloud.speed) + 'px';
+        
+        if (parseFloat(cloud.style.left) < -parseFloat(cloud.style.width)) {
+          cloud.remove();
+          clouds.splice(i, 1);
+        }
+      }
+      
+      // Move and process enemies
+      for (let i = enemies.length - 1; i >= 0; i--) {
+        const enemy = enemies[i];
+        enemy.style.left = (parseFloat(enemy.style.left) - obstacleSpeed) + 'px';
+        
+        // Enemy shooting logic
+        enemy.shootTimer -= 20; // Decrease timer each frame (20ms)
+        if (enemy.shootTimer <= 0) {
+          enemyShoot(enemy);
+          enemy.shootTimer = Math.random() * 2000 + 1000; // Random cooldown between 1-3 seconds
+        }
+        
+        // Check collision with player
+        const planeRect = airplane.getBoundingClientRect();
+        const enemyRect = enemy.getBoundingClientRect();
+        
+        if (checkCollision(planeRect, enemyRect)) {
+          createExplosion(planeRect.left, planeRect.top);
+          endGame();
+          return;
+        }
+        
+        if (parseFloat(enemy.style.left) < -parseFloat(enemy.style.width)) {
+          enemy.remove();
+          enemies.splice(i, 1);
+        }
+      }
+      
+      // Process player bullets
+      for (let i = bullets.length - 1; i >= 0; i--) {
+        const bullet = bullets[i];
+        bullet.style.left = (parseFloat(bullet.style.left) + 10) + 'px';
+        
+        // Check if bullet is out of bounds
+        if (parseFloat(bullet.style.left) > window.innerWidth) {
+          bullet.remove();
+          bullets.splice(i, 1);
+          continue;
+        }
+        
+        // Check collision with enemies
+        const bulletRect = bullet.getBoundingClientRect();
+        for (let j = enemies.length - 1; j >= 0; j--) {
+          const enemy = enemies[j];
+          const enemyRect = enemy.getBoundingClientRect();
+          
+          if (checkCollision(bulletRect, enemyRect)) {
+            bullet.remove();
+            bullets.splice(i, 1);
+            
+            enemy.health--;
+            if (enemy.health <= 0) {
+              createExplosion(enemyRect.left, enemyRect.top);
+              enemy.remove();
+              enemies.splice(j, 1);
+              score += 10;
+              scoreElement.textContent = 'Score: ' + score;
+            }
+            break;
+          }
+        }
+      }
+      
+      // Process enemy bullets
+      for (let i = enemyBullets.length - 1; i >= 0; i--) {
+        const bullet = enemyBullets[i];
+        bullet.style.left = (parseFloat(bullet.style.left) - 8) + 'px';
+        
+        // Check if bullet is out of bounds
+        if (parseFloat(bullet.style.left) < 0) {
+          bullet.remove();
+          enemyBullets.splice(i, 1);
+          continue;
+        }
+        
+        // Check collision with player
+        const bulletRect = bullet.getBoundingClientRect();
+        const planeRect = airplane.getBoundingClientRect();
+        
+        if (checkCollision(bulletRect, planeRect)) {
+          createExplosion(planeRect.left, planeRect.top);
+          endGame();
+          return;
+        }
+      }
+      
+      // Create new clouds randomly
+      if (Math.random() < 0.02) {
+        createCloud();
+      }
+      
+      // Create new enemies periodically, adjust based on score for difficulty
+      let enemyChance = 0.005 + (score / 2000);
+      enemyChance = Math.min(enemyChance, 0.02); // Cap at reasonable rate
+      if (Math.random() < enemyChance) {
+        createEnemy();
+      }
+      
+      // Check if plane has hit the edges
+      if (planeY <= 0 || planeY >= window.innerHeight - 40) {
+        createExplosion(parseFloat(airplane.style.left), planeY);
+        endGame();
+      }
+    }
+    
+    // Start cloud generation
+    for (let i = 0; i < 10; i++) {
+      const cloud = document.createElement('div');
+      cloud.className = 'cloud';
+      const size = Math.random() * (window.innerWidth / 10) + (window.innerWidth / 20);
+      cloud.style.width = size + 'px';
+      cloud.style.height = size / 2 + 'px';
+      cloud.style.left = Math.random() * window.innerWidth + 'px';
+      cloud.style.top = Math.random() * (window.innerHeight - size) + 'px';
+      cloud.speed = Math.random() * 2 + 1;
+      gameContainer.appendChild(cloud);
+      clouds.push(cloud);
+    }
+    
+    // Position airplane initially
+    airplane.style.top = planeY + 'px';
+    
+    // Start game loop
+    let gameLoopInterval = setInterval(gameLoop, 20);
+  </script>
+</body>
+</html>
